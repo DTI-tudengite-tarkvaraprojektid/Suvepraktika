@@ -33,4 +33,7 @@ dependencies {
 
     //filters library
     implementation 'info.androidhive:imagefilters:1.0.7'
+
+    //http library
+    implementation 'com.squareup.okhttp3:okhttp:3.10.0'
 }

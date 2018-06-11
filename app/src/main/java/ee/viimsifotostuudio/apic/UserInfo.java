@@ -49,12 +49,13 @@ public class UserInfo extends AppCompatActivity {
         getSupportActionBar().setHomeAsUpIndicator(upArrow);
     }
 
+
     //next step
     private void payment() {
         if (CheckBox.isChecked()) {
             if (checkUserInfo()) {
-                Intent payment = new Intent(this, Payment.class);
-                startActivity(payment);
+                Intent uploader = new Intent(this, Uploader.class);
+                startActivity(uploader);
             }
         } else {
             Toast.makeText(this, "Please Accept Terms and Conditions to continue.", Toast.LENGTH_SHORT).show();
