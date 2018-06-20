@@ -1,16 +1,20 @@
 package ee.viimsifotostuudio.apic;
 
 import android.Manifest;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
+import android.graphics.Color;
 import android.graphics.drawable.Drawable;
+import android.media.RingtoneManager;
 import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
-import android.os.Handler;
 import android.support.annotation.NonNull;
 import android.support.v7.app.AppCompatActivity;
 import android.util.Log;
@@ -30,9 +34,11 @@ import java.security.KeyManagementException;
 import java.security.KeyStore;
 import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Locale;
 import java.util.Objects;
@@ -46,6 +52,8 @@ import javax.net.ssl.TrustManager;
 import javax.net.ssl.TrustManagerFactory;
 import javax.net.ssl.X509TrustManager;
 
+import okhttp3.Call;
+import okhttp3.Callback;
 import okhttp3.ConnectionSpec;
 import okhttp3.MediaType;
 import okhttp3.MultipartBody;
@@ -58,13 +66,16 @@ import okhttp3.TlsVersion;
 import okio.BufferedSink;
 import okio.Okio;
 
-//TODO everything
 // HTTP client https://github.com/square/okhttp
 public class Uploader extends AppCompatActivity {
 
     final private static String SERVER_URL = "https://kalmerr.planet.ee/apic/";
+    final public static String NOTIFICATION_UPLOADING = "uploading";
+    final public static String NOTIFICATION_COMPLETED = "upload_complete";
+
     ProgressBar progressBar;
-    private Handler handler;
+    NotificationManager mNotificationManager;
+    Notification.Builder mNotiBuilder;
 
     static class HttpResponse {
         int code;
@@ -98,7 +109,6 @@ public class Uploader extends AppCompatActivity {
         final Drawable upArrow = getResources().getDrawable(R.drawable.ic_menu_arrow_back);
         getSupportActionBar().setHomeAsUpIndicator(upArrow);
 
-        handler = new Handler(this.getApplicationContext().getMainLooper());
         progressBar = findViewById(R.id.progressBar);
         progressBar.setIndeterminate(true);
 
@@ -109,6 +119,56 @@ public class Uploader extends AppCompatActivity {
                 checkForPermission();
             }
         });
+
+        mNotificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        mNotiBuilder = new Notification.Builder(getApplicationContext())
+                //.setAutoCancel(true)
+                //.setDefaults(Notification.DEFAULT_ALL)
+                //.setWhen(System.currentTimeMillis())
+                .setContentTitle("Äpic")
+                .setContentText("Äpic picture uploader")
+                .setContentInfo("It will be uploaded")
+                .setOnlyAlertOnce(false)
+                //.setProgress(100, 0, true)
+                .setSmallIcon(R.mipmap.ic_launcher)
+        //.setLargeIcon(R.mipmap.ic_launcher_round)
+        ;
+
+        /*if (BuildConfig.DEBUG && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            for(NotificationChannel n :  mNotificationManager.getNotificationChannels()){
+                mNotificationManager.deleteNotificationChannel(n.getId());
+            }
+        }*/
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel nc1 = new NotificationChannel(NOTIFICATION_UPLOADING, "Upload in progress", NotificationManager.IMPORTANCE_LOW);
+
+            // Configure the notification channel.
+            nc1.setDescription("Upload in progress");
+            nc1.enableLights(false);
+            nc1.setSound(null, null);
+            //nc1.setLightColor(Color.BLUE);
+            nc1.setVibrationPattern(new long[]{0});
+            nc1.enableVibration(false);
+
+            NotificationChannel nc2 = new NotificationChannel(NOTIFICATION_COMPLETED, "Upload completed", NotificationManager.IMPORTANCE_HIGH);
+
+            // Configure the notification channel.
+            nc2.setDescription("Uploading has been completed");
+            nc2.enableLights(true);
+            nc2.setLightColor(Color.GREEN);
+            nc2.setVibrationPattern(new long[]{0, 1000, 500, 1000});
+            nc2.enableVibration(true);
+            mNotificationManager.createNotificationChannels(Arrays.asList(nc1, nc2));
+
+            mNotiBuilder.setChannelId(NOTIFICATION_UPLOADING);
+        } else
+            mNotiBuilder.setPriority(Notification.PRIORITY_DEFAULT);
+
+        if (BuildConfig.DEBUG) {
+            //Notification m = mNotiBuilder.build();
+            //mNotificationManager.notify(1, m);
+        }
     }
 
     @Override
@@ -164,16 +224,19 @@ public class Uploader extends AppCompatActivity {
     }
 
     private void UploadImage() {
+        //mNotiBuilder.setProgress(100, 0, true);
+        //mNotificationManager.notify(1, mNotiBuilder.build());
+
         final Variables vars = (Variables) getApplication();
-        Bitmap img = vars.getFilterImage();
+        //Bitmap img = vars.getFilterImageArray(0);
 
         //String filename = GetFilePath();
         //if (filename.isEmpty())
         //    return false;
 
         //FileOutputStream outStream = new FileOutputStream(filename);
-        ByteArrayOutputStream outStream = new ByteArrayOutputStream();
-        img.compress(Bitmap.CompressFormat.JPEG, 90, outStream);
+        //ByteArrayOutputStream outStream = new ByteArrayOutputStream();
+        //img.compress(Bitmap.CompressFormat.JPEG, 90, outStream);
 
         ArrayList<ConnectionSpec> cs = new ArrayList<>();
 
@@ -186,7 +249,7 @@ public class Uploader extends AppCompatActivity {
                 .allEnabledCipherSuites()
                 .build());
 
-        OkHttpClient.Builder httpClientBuilder = new OkHttpClient.Builder()
+        OkHttpClient.Builder httpBuilder = new OkHttpClient.Builder()
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(10, TimeUnit.SECONDS)
                 .retryOnConnectionFailure(false)
@@ -201,137 +264,110 @@ public class Uploader extends AppCompatActivity {
                 final SSLContext sslContext = SSLContext.getInstance("TLSv1.2");
                 //final SSLContext sslContext = SSLContext.getInstance("SSL");
                 //final SSLContext sslContext = SSLContext.getInstance("TLS");
-                sslContext.init(null, new X509TrustManager[]{trustMgr}, new java.security.SecureRandom());
+                sslContext.init(null, new X509TrustManager[]{trustMgr}, new SecureRandom());
 
                 final SSLSocketFactory sslSocketFactory = sslContext.getSocketFactory();
 
-                httpClientBuilder
-                        .sslSocketFactory(sslSocketFactory, trustMgr)
+                httpBuilder.sslSocketFactory(sslSocketFactory, trustMgr)
                         .hostnameVerifier(hostVerifier);
-
             } catch (NoSuchAlgorithmException | KeyManagementException e) {
                 e.printStackTrace();
-                Toast.makeText(getApplicationContext(), "Failed to set up \"secure\" connection", Toast.LENGTH_SHORT).show();
             }
         }
 
-        final OkHttpClient httpClient = httpClientBuilder.build();
+        final OkHttpClient httpClient = httpBuilder.build();
 
-        final RequestBody body = new MultipartBody.Builder().setType(MultipartBody.FORM)
+        final MultipartBody.Builder body = new MultipartBody.Builder().setType(MultipartBody.FORM)
                 .addFormDataPart("firstName", vars.getFirstName())
                 .addFormDataPart("lastName", vars.getLastName())
                 .addFormDataPart("email", vars.getEMail())
                 .addFormDataPart("phone", vars.getPhone())
-                .addFormDataPart("address", vars.getAddress())
-                .addFormDataPart("copies", String.valueOf(vars.getNumberOfCopies()))
-                /* Set file name so PHP knows to put it in $_FILES */
-                .addFormDataPart("filterImage", "pic.jpg",
-                        new ProgressingRequestBody(MediaType.parse("image/jpeg"), outStream, new ProgressingRequestBody.ProgressListener() {
-                            @Override
-                            public void transferred(long total, long length) {
-                                final int progress = (int)(total / (float)length * 100);
-                                handler.post(new Runnable() {
-                                    @Override
-                                    public void run() {
-                                        progressBar.setIndeterminate(false);
-                                        progressBar.setProgress(progress);
-                                    }
-                                });
-                            }
-                        }))
-                .build();
+                .addFormDataPart("address", vars.getAddress());
+        for (int i = 0; i<vars.getFilterImageArrayLength(); i++) {
+            Bitmap img = vars.getFilterImageArray(i);
+            ByteArrayOutputStream outStream = new ByteArrayOutputStream();
+            img.compress(Bitmap.CompressFormat.JPEG, 90, outStream);
+
+            body.addFormDataPart(String.format(Locale.getDefault(), "copies[%1$d]", i), String.valueOf(vars.getFilterImageQuantity(i)))
+                    .addFormDataPart(String.format(Locale.getDefault(), "filterImage[%1$d]", i), "pic.jpg",
+
+                            //.addFormDataPart("copies", String.valueOf(vars.getFilterImageQuantity(0)))
+                            /* Set file name so PHP knows to put it in $_FILES */
+                            //.addFormDataPart("filterImage", "pic.jpg",
+                            new ProgressingRequestBody(MediaType.parse("image/jpeg"), outStream, new ProgressingRequestBody.ProgressListener() {
+                                //@Override
+                                public void transferred(long total, long length) {
+                                    mNotiBuilder.setProgress(100, (int) (total / (float) length * 100), false);
+                                    mNotiBuilder.setOngoing(false)
+                                            .setAutoCancel(true)
+                                            .setContentInfo("Uploading pic %d of %d");
+                                    mNotificationManager.notify(0, mNotiBuilder.build());
+                                }
+                            }));
+        }
+        //.build();
+
+
+
 
         final Request req = new Request.Builder()
                 .url(SERVER_URL)
                 .addHeader("Accept", "application/json")
-                .post(body)// kus see faili nimi tuleb, py?
+                .post(body.build())
                 .build();
 
-        final UploadTask asyncTask = new UploadTask();
-        asyncTask.setProgressBar(progressBar);
-        asyncTask.execute(httpClient, req, this.getApplicationContext());
-
-    }
-
-    class UploadTask extends AsyncTask<Object, Void, HttpResponse> {
-
-        Context ctx;
-        ProgressBar progressBar;
-
-        public void setProgressBar(ProgressBar bar) {
-            progressBar = bar;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            mNotiBuilder.setChannelId(NOTIFICATION_UPLOADING);
+        } else {
+            mNotiBuilder.setPriority(Notification.PRIORITY_DEFAULT);
         }
 
-        @Override
-        protected void onPreExecute() {
-            super.onPreExecute();
-            if (progressBar != null)
-                progressBar.setVisibility(View.VISIBLE);
-        }
-
-        @Override
-        protected HttpResponse doInBackground(Object... params) {
-            try {
-                OkHttpClient httpClient = (OkHttpClient) params[0];
-                Request req = (Request) params[1];
-                ctx = (Context) params[2];
-
-                Response response = httpClient.newCall(req).execute();
-                //if (!response.isSuccessful()) {
-                Log.d(Uploader.class.getSimpleName(), "Successful: " + response.isSuccessful());
-                //   return null;
-                //}
-
-                //publishProgress();
-
-                HttpResponse httpResp = new HttpResponse();
-                // Eats the response and closes connection
-                httpResp.setBody(response.body().string());
-                httpResp.setCode(response.code());
-
-                Log.d(Uploader.class.getSimpleName(), httpResp.getBody());
-                return httpResp;
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-            return null;
-        }
-
-        @Override
-        protected void onPostExecute(HttpResponse res) {
-            super.onPostExecute(res);
-            JSONObject json;
-
-            if (progressBar != null) {
-                progressBar.setProgress(100);
-                progressBar.setVisibility(View.GONE);
+        httpClient.newCall(req).enqueue(new Callback() {
+            @Override
+            public void onFailure(Call call, IOException e) {
+                Toast.makeText(getApplicationContext(),
+                        "Error occurred while contacting the server. Try again later.",
+                        Toast.LENGTH_SHORT).show();
             }
 
-            if (res != null && res.getCode() == 200) {
-                try {
-                    json = new JSONObject(res.getBody());
-                    ((Variables) ctx).setPaymentToken(json.getString("token"));
-                    Intent payment = new Intent(ctx, Payment.class);
-                    ctx.startActivity(payment);
-                    return;
-                } catch (JSONException e) {
-                    e.printStackTrace();
-                    Toast.makeText(ctx,
-                            "Problem parsing server response. Try again later.",
-                            Toast.LENGTH_SHORT).show();
+            @Override
+            public void onResponse(Call call, Response response) throws IOException {
+                Log.d("Uploader", "In onResponse");
+
+                mNotiBuilder.setAutoCancel(true)
+                        .setProgress(0, 0, false)
+                        .setContentText("Upload completed!")
+                        .setOngoing(false);
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    Log.d("Uploader", "Set NotificationChannel to " + NOTIFICATION_COMPLETED);
+                    mNotiBuilder.setChannelId(NOTIFICATION_COMPLETED);
+                } else {
+                    mNotiBuilder.setPriority(Notification.PRIORITY_HIGH);
                 }
 
+                mNotificationManager.notify(1, mNotiBuilder.build());
+
+                JSONObject json;
+                Context ctx = getApplicationContext();
+
+                if (response.code() == 200) {
+                    try {
+                        json = new JSONObject(response.body().string());
+                        ((Variables) ctx).setPaymentToken(json.getString("token"));
+                        Intent payment = new Intent(ctx, Payment.class);
+                        startActivity(payment);
+                        return;
+                    } catch (NullPointerException | JSONException e) {
+                        e.printStackTrace();
+                    }
+                }
+
+                Toast.makeText(ctx,
+                        "Problem parsing server response. Try again later.",
+                        Toast.LENGTH_SHORT).show();
             }
-
-            Toast.makeText(ctx,
-                    "Error occurred while contacting the server. Try again later.",
-                    Toast.LENGTH_SHORT).show();
-        }
-
-        @Override
-        protected void onProgressUpdate(Void... values) {
-            super.onProgressUpdate(values);
-        }
+        });
     }
 
     class OverlyTrustyHostnameVerifier implements HostnameVerifier {
@@ -342,7 +378,7 @@ public class Uploader extends AppCompatActivity {
     }
 
     // Ignores all certificate errors, for debugging
-    static class OverlyTrustingTrustManager implements X509TrustManager {
+    class OverlyTrustingTrustManager implements X509TrustManager {
         @Override
         public void checkClientTrusted(X509Certificate[] chain, String authType) throws CertificateException {
 
@@ -400,3 +436,4 @@ public class Uploader extends AppCompatActivity {
         }
     }
 }
+

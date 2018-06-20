@@ -1,11 +1,10 @@
 package ee.viimsifotostuudio.apic;
 
+import android.content.Intent;
 import android.graphics.drawable.Drawable;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
-import android.content.Intent;
 import android.view.View;
-import android.widget.Button;
 
 import java.util.Objects;
 
@@ -30,5 +29,10 @@ public class Payment extends AppCompatActivity {
                 startActivity(intent);
             }
         });
+    }
+
+    public void upload(View v) {
+        Intent uploader = new Intent(this, Uploader.class);
+        startActivity(uploader);
     }
 }
